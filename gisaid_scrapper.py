@@ -6,13 +6,15 @@ from selenium.webdriver.common.by import By
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as cond
 from selenium.common.exceptions import NoAlertPresentException, MoveTargetOutOfBoundsException, TimeoutException, ElementClickInterceptedException
-from selenium.webdriver.firefox.options import Options
+from selenium.webdriver.chrome.options import Options
 import time
 from selenium.webdriver.common.action_chains import ActionChains
 import tqdm
 import glob
 import os
 import sys
+
+import logging
 
 METADATA_COLUMNS = [
     "Accession",
@@ -35,13 +37,21 @@ METADATA_COLUMNS = [
     "Length"
 ]
 
+FORMAT = '%(asctime)s:%(levelname)s:%(message)s'
+
+logging.basicConfig(filename='GISAID_Download_Log.log', level=logging.DEBUG,
+    format=FORMAT)
+
 class GisaidCoVScrapper:
     def __init__(
         self,
         headless: bool = False,
         whole_genome_only: bool = True,
         destination: str = "fastas",
+
+        
     ):
+        logging.info('Creating "fastas" folder')
         self.whole_genome_only = whole_genome_only
 
         self.destination = destination
@@ -52,35 +62,66 @@ class GisaidCoVScrapper:
 
         options = Options()
         options.headless = headless
-        self.driver = webdriver.Firefox(options=options)
+        logging.info('Attempting to establish Chrome session')
+        self.driver = webdriver.Chrome(options=options)
+        logging.info('Established Chrome session')
         self.driver.implicitly_wait(1000)
+        logging.info('Waiting to stabilize Chrome session')
         self.driver.set_window_size(1366, 2000)
+        logging.info('Setting Chrome window size')
 
+        logging.info('Attempting to set destination folder to "fastas" folder')
         if not os.path.exists(destination):
             os.makedirs(destination)
+        logging.info('Successfully set destination folder to "fastas" folder')
 
+        logging.info('Updating Cache')
         self._update_cache()
+        
+
         if os.path.isfile(destination + "/metadata.tsv"):
+            logging.info('Opening /metadata.tsv')
             self.metadata_handle = open(destination + "/metadata.tsv", "a", encoding='utf-8')
         else:
+            logging.info('Creating /metadata.tsv')
             self.metadata_handle = open(destination + "/metadata.tsv", "w", encoding='utf-8')
             self.metadata_handle.write("\t".join(METADATA_COLUMNS) + "\n")
 
+    def remove_sys_curtain(self):
+        logging.info('Removing sys curtain')
+        try:
+            self.driver.execute_script("document.getElementById('sys_curtain').remove()")
+            logging.info('Successfully removed sys curtain')
+        except:
+            logging.info('No sys curtain to remove')
+            pass
+
     def login(self, username: str, password: str):
+        logging.info('Loading login page')
         self.driver.get("https://platform.gisaid.org/epi3/frontend")
-        time.sleep(2)
+        time.sleep(10)
+        logging.info('Successfully loaded login page')
         login = self.driver.find_element_by_name("login")
+        logging.info('Found username input field')
         login.send_keys(username)
 
         passwd = self.driver.find_element_by_name("password")
+        logging.info('Found password input field')
         passwd.send_keys(password)
-        login_box = self.driver.find_element_by_class_name("form_button_submit")
 
-        self.driver.execute_script("document.getElementById('sys_curtain').remove()")
+        login_box = self.driver.find_element_by_class_name("form_button_submit")
+        logging.info('Found login form box')
+
+        self.remove_sys_curtain()
+
+        logging.info('Attempting to submit login credentials')
         self.driver.execute_script(
             "document.getElementsByClassName('form_button_submit')[0].click()"
         )
-        WebDriverWait(self.driver, 30).until(cond.staleness_of(login_box))
+        logging.info('Clicked login credentials submissin button')
+        logging.info('Waiting for login credentials to load')
+        WebDriverWait(self.driver, 60).until(cond.staleness_of(login_box))
+        logging.info('Sucessfully logged in.')
 
     def load_epicov(self):
         time.sleep(2)
@@ -96,12 +137,12 @@ class GisaidCoVScrapper:
         self._update_metainfo()
 
     def _go_to_seq_browser(self):
-        self.driver.execute_script("document.getElementById('sys_curtain').remove()")
+        self.remove_sys_curtain()
         self.driver.find_element_by_link_text("EpiCoV™").click()
 
-        time.sleep(3)
+        time.sleep(10)
 
-        self.driver.execute_script("document.getElementById('sys_curtain').remove()")
+        self.remove_sys_curtain()
         self.driver.find_elements_by_xpath("//*[contains(text(), 'Browse')]")[0].click()
 
     def _update_metainfo(self):
@@ -152,6 +193,7 @@ class GisaidCoVScrapper:
         self._save_data(iframe, name)
 
         self._action_click(self.driver.find_elements_by_tag_name("button")[1])
+        self.driver.ActionChains(driver).send_keys(Keys.ESCAPE).perform()
         self.driver.switch_to.default_content()
         time.sleep(1)
 
@@ -210,7 +252,7 @@ class GisaidCoVScrapper:
             action.move_to_element(element).perform()
             element.click()
         except ElementClickInterceptedException:
-            self.driver.execute_script("document.getElementById('sys_curtain').remove()")
+            self.remove_sys_curtain()
             action.move_to_element(element).perform()
             element.click()
 
